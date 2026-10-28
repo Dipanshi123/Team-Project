@@ -1,7 +1,8 @@
 /* =========================================================
    Food Rescue - script.js
-   Vanilla JavaScript. Data is saved ONLY in this browser
-   using localStorage (demo data, no backend, no sync).
+   Vanilla JavaScript. Real donations and their status are stored in MongoDB
+   through the Express API; sample listings and account/verification demo state
+   remain local to this browser.
 
    Honesty rules built into this file:
    - Nothing is ever shown as "Verified" unless a real verification
@@ -17,6 +18,7 @@
      Configuration
      ========================================================= */
   const CONFIG = {
+    apiBaseUrl: "https://team-project-kz7m.onrender.com/api",
     // Leave empty to run the clearly-labelled demo workflow (everything stays "Pending Review").
     // To connect a real verification backend, set this to its URL. The backend must accept a JSON POST
     // {method, details} and answer {status: "verified" | "pending"}. Only a "verified" answer from that
@@ -393,24 +395,35 @@
   }
 
   /** Load listings; first visit (or bad data) starts from the sample listings. */
-  function loadListings() {
+  async function loadListings() {
     try {
-      const raw = localStorage.getItem(KEYS.listings);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          listings = parsed.filter(isValidListing).map(normalizeListing);
-          return;
-        }
-      }
+      const response = await fetch(`${CONFIG.apiBaseUrl}/donations`);
+      if (!response.ok) throw new Error(`API returned ${response.status}`);
+      const saved = await response.json();
+      if (!Array.isArray(saved)) throw new Error("Unexpected donations response");
+      // Keep fictional demo cards clearly labelled, but load real listings from MongoDB.
+      listings = [...saved.map(normalizeListing), ...getSampleData()];
+      return true;
     } catch (err) {
-      console.error("Could not read localStorage:", err);
+      console.error("Could not load donations from backend:", err);
+      // Allow the UI/demo to open if the backend is temporarily unavailable.
+      try {
+        const raw = localStorage.getItem(KEYS.listings);
+        const parsed = raw ? JSON.parse(raw) : [];
+        listings = [
+          ...(Array.isArray(parsed) ? parsed.filter(isValidListing).map(normalizeListing) : []),
+          ...migrateLegacyListings(),
+          ...getSampleData()
+        ];
+      } catch (storageErr) {
+        listings = getSampleData();
+      }
+      showToast("Backend unavailable. Showing demo/local listings; database changes will not work until the backend is running.", "error");
+      return false;
     }
-    listings = [...migrateLegacyListings(), ...getSampleData()];
-    saveListings();
   }
 
-  /** Fictional sample listings, labelled as samples. Times are relative to "now" so the demo never starts expired. */
+    /** Fictional sample listings, labelled as samples. Times are relative to "now" so the demo never starts expired. */
   function getSampleData() {
     const now = Date.now();
     const at = (h) => new Date(now + h * HOUR).toISOString();
@@ -662,37 +675,65 @@
   }
 
   /** Reserve a listing for a requester. Guards stop double or invalid requests. */
-  function reserveListing(id, name, org) {
+  async function reserveListing(id, name, org) {
     const item = listings.find((l) => l.id === id);
     if (!item) { showToast("That listing no longer exists.", "error"); render(); return false; }
     if (item.status !== STATUS.AVAILABLE) { showToast("This food has already been requested.", "info"); render(); return false; }
     if (isExpired(item)) { showToast("The pickup deadline has passed for this listing.", "error"); render(); return false; }
 
-    item.status = STATUS.RESERVED;
-    item.reservedBy = name;
-    item.reservedOrg = org;
-    saveListings();
+    if (!item.sample) {
+      try {
+        const response = await fetch(`${CONFIG.apiBaseUrl}/donations/${encodeURIComponent(id)}/reserve`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, org })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Could not reserve this listing.");
+        Object.assign(item, normalizeListing(result));
+      } catch (err) {
+        showToast(err.message || "Could not connect to the backend. Please try again.", "error");
+        return false;
+      }
+    } else {
+      item.status = STATUS.RESERVED;
+      item.reservedBy = name;
+      item.reservedOrg = org;
+      saveListings();
+    }
     render();
     showToast(`"${item.name}" is now Reserved for ${name}. Please collect it before the pickup deadline.`);
     return true;
   }
 
-  /** Mark a reserved listing as picked up. */
-  function markPickedUp(id) {
+    /** Mark a reserved listing as picked up. */
+  async function markPickedUp(id) {
     const item = listings.find((l) => l.id === id);
     if (!item) { showToast("That listing no longer exists.", "error"); render(); return; }
     if (item.status === STATUS.PICKED) { showToast("This food has already been picked up.", "info"); render(); return; }
     if (isExpired(item)) { showToast("The pickup deadline has passed for this listing.", "error"); render(); return; }
     if (item.status !== STATUS.RESERVED) { showToast("Request this food before marking it as picked up.", "error"); render(); return; }
 
-    item.status = STATUS.PICKED;
-    saveListings();
+    if (!item.sample) {
+      try {
+        const response = await fetch(`${CONFIG.apiBaseUrl}/donations/${encodeURIComponent(id)}/pickup`, { method: "PATCH" });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Could not update pickup status.");
+        Object.assign(item, normalizeListing(result));
+      } catch (err) {
+        showToast(err.message || "Could not connect to the backend. Please try again.", "error");
+        return;
+      }
+    } else {
+      item.status = STATUS.PICKED;
+      saveListings();
+    }
     render();
     showToast(`${item.servings} meals marked as picked up. Thank you!`);
   }
 
-  /** Submit handler for the request dialog. */
-  function handleRequestSubmit(e) {
+    /** Submit handler for the request dialog. */
+  async function handleRequestSubmit(e) {
     e.preventDefault();
     const nameEl = $("#requesterName");
     const orgEl = $("#requesterOrg");
@@ -700,7 +741,8 @@
     const org = orgEl.value.trim();
     if (name.length < 2) { setError(nameEl, "Please enter your name (at least 2 characters)."); nameEl.focus(); return; }
     setError(nameEl, "");
-    if (reserveListing(requestDialog.dataset.id, name, org)) closeDialog(requestDialog);
+    const reserved = await reserveListing(requestDialog.dataset.id, name, org);
+    if (reserved) closeDialog(requestDialog);
   }
 
   /* =========================================================
@@ -811,7 +853,7 @@
   }
 
   /** Handle form submit: validate, block duplicates, save, and show the new card. */
-  function handleDonate(event) {
+  async function handleDonate(event) {
     event.preventDefault();
     if (submitBtn.disabled) return; // prevent double submission
     if (imageBusy) { showToast("Your photo is still being processed. Please try again in a moment.", "info"); return; }
@@ -856,10 +898,18 @@
       image: pendingImage, status: STATUS.AVAILABLE, sample: false, createdAt: Date.now()
     });
 
-    listings.unshift(item);
-    if (!saveListings()) {
-      // Most likely storage is full (large photo). Roll back so the page never shows something unsaved.
-      listings.shift();
+    try {
+      const response = await fetch(`${CONFIG.apiBaseUrl}/donations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(item)
+      });
+      const savedItem = await response.json();
+      if (!response.ok) throw new Error(savedItem.error || "Could not save donation.");
+      // Use MongoDB's id for reserve/pickup actions.
+      listings.unshift(normalizeListing(savedItem));
+    } catch (err) {
+      showToast(`Donation was not saved to the database: ${err.message || "Backend unavailable"}. Please ensure the backend is running and try again.`, "error");
       submitBtn.disabled = false;
       submitBtn.textContent = "Submit Donation";
       return;
@@ -1282,10 +1332,11 @@
     // Reset demo listings
     $("#resetDemo").addEventListener("click", () => {
       if (!window.confirm("Reset all listings back to the original sample data? Listings you added will be removed.")) return;
-      listings = getSampleData();
+      const realListings = listings.filter((item) => !item.sample);
+      listings = [...realListings, ...getSampleData()];
       saveListings();
       render(true);
-      showToast("Demo listings have been reset.", "info");
+      showToast("Demo listings have been reset. Database listings were kept.", "info");
     });
 
     // Verification: open buttons (delegated), forms, accordion, clear
@@ -1322,11 +1373,11 @@
   /* =========================================================
      Init
      ========================================================= */
-  function init() {
+  async function init() {
     $("#year").textContent = new Date().getFullYear();
     wireErrorAccessibility();
     refreshDateLimits();
-    loadListings();
+    await loadListings();
     form.elements.donor.value = account.name || "";
     initNav();
     initScrollSpy();
