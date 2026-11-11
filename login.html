@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#15803d" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%8C%BF%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="dashboard.css" />
+  <title>Log in | Food Rescue</title>
+</head>
+<body class="auth" data-page="login">
+  <main class="acard" id="main">
+    <a href="index.html" class="dbrand" style="color:var(--green-800)">🌿 Food Rescue</a>
+    <div><h1>Welcome back</h1><p>Log in or create an account to open your dashboard.</p></div>
+    <form id="authForm" novalidate>
+      <fieldset class="field"><legend>I am a</legend>
+        <div class="segmented">
+          <input type="radio" name="role" id="rD" value="donor" checked /><label for="rD">Donor</label>
+          <input type="radio" name="role" id="rR" value="receiver" /><label for="rR">Receiver</label>
+        </div>
+      </fieldset>
+      <div class="chips" style="margin:0">
+        <button type="button" class="chip" data-mode="login" aria-pressed="true">Log in</button>
+        <button type="button" class="chip" data-mode="signup" aria-pressed="false">Create account</button>
+      </div>
+      <label class="field su" hidden>Your name<input type="text" name="name" maxlength="60" autocomplete="name" /></label>
+      <label class="field su" hidden><span id="orgL">Restaurant or organisation</span><input type="text" name="org" maxlength="80" autocomplete="organization" /></label>
+      <label class="field">Email<input type="email" name="email" autocomplete="email" /></label>
+      <label class="field">Password<input type="password" name="password" id="pw" minlength="6" autocomplete="current-password" /></label>
+      <p class="error" id="authErr" role="alert"></p>
+      <button class="btn btn-primary btn-lg btn-block" id="sub">Log in</button>
+    </form>
+  </main>
+  <div class="toast-container" id="toasts" popover="manual" aria-live="polite"></div>
+  <script src="dashboard.js"></script>
+</body>
+</html>
